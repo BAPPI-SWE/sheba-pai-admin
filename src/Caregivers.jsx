@@ -25,7 +25,8 @@ const NEXT = { new: "contacted", contacted: "confirmed", confirmed: "ongoing", o
 const SHIFTS = { day8: "8h day", day12: "12h day", night12: "12h night", live24: "24h live-in" };
 const UNITS = { day8: "per 8 hours", shift12: "per 12-hour shift", live24: "per 24 hours", month: "per month", visit: "per visit" };
 const TIERS = { attendant: "Caregiver / attendant", trained: "Trained caregiver", nurse: "Registered nurse" };
-const ICON_KEYS = ["stroke", "bedridden", "dementia", "postop", "newborn", "elderly", "night", "hospital", "nursing", "general"];
+const ICON_KEYS = ["injection", "dressing", "saline", "catheter", "ngtube", "checkup", "livein", "stroke", "bedridden", "dementia", "postop", "newborn", "elderly", "night", "hospital", "nursing", "general"];
+const KINDS = { urgent: "Urgent service", package: "Monthly package", caregiver: "Asked for a caregiver", general: "General request" };
 const SOURCES = { app: "App", phone: "Phone call", whatsapp: "WhatsApp", admin: "Admin" };
 
 function StatusPill({ status }) {
@@ -79,6 +80,7 @@ function SubTabs({ active, onChange, newCount }) {
   const tabs = [
     { key: "requests", label: newCount ? `Requests (${newCount} new)` : "Requests" },
     { key: "caregivers", label: "Caregivers" },
+    { key: "offers", label: "Services & packages" },
     { key: "types", label: "Care types" },
   ];
   return (
@@ -122,7 +124,7 @@ function BookingForm({ initial, geo, categories, onSave, onCancel, title, saveLa
         <Field label="Contact phone *"><input className="input sm" value={f.contactPhone} onChange={(e) => set("contactPhone", e.target.value)} placeholder="01XXXXXXXXX" /></Field>
       </div>
       <div className="field-grid">
-        <Field label="District *">
+        <Field label="District">
           <select className="input sm" value={f.district} onChange={(e) => set("district", e.target.value)}>
             <option value="">— choose —</option>
             {districts.map((d) => <option key={d.name} value={d.name}>{d.name} ({d.bn})</option>)}
@@ -180,7 +182,7 @@ function BookingForm({ initial, geo, categories, onSave, onCancel, title, saveLa
 /** Find a listed caregiver to assign — narrowed to the request's district and care type by default. */
 function AssignPicker({ booking, onPick }) {
   const [q, setQ] = useState("");
-  const [sameDistrict, setSameDistrict] = useState(true);
+  const [sameDistrict, setSameDistrict] = useState(!!booking.district);
   const [sameType, setSameType] = useState(!!booking.category);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -202,7 +204,7 @@ function AssignPicker({ booking, onPick }) {
     <div style={{ border: "1px solid var(--line)", borderRadius: 10, padding: 12, background: "var(--surface-2)" }}>
       <div className="row" style={{ alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <input className="input sm" style={{ flex: 1, minWidth: 180 }} placeholder="Search name, phone or ID (SP1234)" value={q} onChange={(e) => setQ(e.target.value)} />
-        <label className="small"><input type="checkbox" checked={sameDistrict} onChange={(e) => setSameDistrict(e.target.checked)} /> Works in {booking.district}</label>
+        {booking.district && <label className="small"><input type="checkbox" checked={sameDistrict} onChange={(e) => setSameDistrict(e.target.checked)} /> Works in {booking.district}</label>}
         {booking.category && <label className="small"><input type="checkbox" checked={sameType} onChange={(e) => setSameType(e.target.checked)} /> Offers {booking.categoryName}</label>}
       </div>
       <div style={{ marginTop: 10, maxHeight: 260, overflowY: "auto" }}>
@@ -254,7 +256,9 @@ function BookingCard({ b, geo, categories, onChanged }) {
       <div className="review-head" style={{ cursor: "pointer", display: "flex", gap: 12, alignItems: "flex-start" }} onClick={() => setOpen(!open)}>
         <div style={{ flex: 1 }}>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <strong style={{ fontSize: 15 }}>{b.categoryName || "Caregiver (type not chosen)"}</strong>
+            <strong style={{ fontSize: 15 }}>{b.offerName || b.categoryName || (b.requestedCaregiverName ? `Caregiver: ${b.requestedCaregiverName}` : "General request")}</strong>
+            {b.offerPrice != null && <span className="small" style={{ fontWeight: 700 }}>৳{b.offerPrice}</span>}
+            <span className="pill" style={{ background: "#F1F5F9" }}>{KINDS[b.kind] || KINDS.general}</span>
             <StatusPill status={b.status} />
             <span className="muted small">{b.code} · {SOURCES[b.source]} · {timeAgo(b.createdAt)}</span>
           </div>
@@ -264,7 +268,9 @@ function BookingCard({ b, geo, categories, onChanged }) {
             {" · "}{[b.area, b.district].filter(Boolean).join(", ")}
           </div>
           <div className="muted small" style={{ marginTop: 2 }}>
-            {SHIFTS[b.shift]} · {b.planType === "regular" ? "Regular / monthly" : `Short-term${b.durationDays ? `, ${b.durationDays} days` : ""}`} · starts {fmtDate(b.startDate)}
+            {b.startDate
+              ? <>{SHIFTS[b.shift]} · {b.planType === "regular" ? "Regular / monthly" : `Short-term${b.durationDays ? `, ${b.durationDays} days` : ""}`} · starts {fmtDate(b.startDate)}</>
+              : <>One-tap request — call to get the details{b.district ? "" : " and the area"}</>}
             {b.requestedCaregiverName && <> · asked for <strong>{b.requestedCaregiverName}</strong> ({b.requestedCaregiverCode})</>}
             {b.assignedCaregiver && <> · assigned: <strong>{b.assignedCaregiver.name}</strong></>}
             {b.agreedPrice != null && <> · ৳{b.agreedPrice} {b.priceNote || ""}</>}
@@ -746,6 +752,163 @@ function TypesTab({ categories, onChanged }) {
   );
 }
 
+/* ============================ SERVICES & PACKAGES ============================ */
+
+const OFFER_UNITS = { visit: "per visit", day: "per day", shift12: "per 12 hours", month: "per month" };
+const EMPTY_OFFER = {
+  kind: "urgent", name: "", nameBangla: "", description: "", descriptionBangla: "", iconKey: "general",
+  price: "", priceUnit: "visit", priceNote: "", priceNoteBangla: "", features: "", featuresBangla: "",
+  badge: "", badgeBangla: "", sortOrder: 0, isActive: true,
+};
+
+function OfferForm({ initial, onSave, onCancel }) {
+  const [f, setF] = useState({
+    ...EMPTY_OFFER, ...initial,
+    price: initial?.price ?? "",
+    features: (initial?.features || []).join("\n"),
+    featuresBangla: (initial?.featuresBangla || []).join("\n"),
+  });
+  const [saving, setSaving] = useState(false);
+  const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
+  const isPkg = f.kind === "package";
+  async function submit() {
+    setSaving(true);
+    try { await onSave({ ...f, price: f.price === "" ? null : f.price }); } catch (e) { alert(e.message); } finally { setSaving(false); }
+  }
+  return (
+    <div className="editor">
+      <div className="field-grid">
+        <Field label="Shown in" width={200}>
+          <select className="input sm" value={f.kind} onChange={(e) => setF((p) => ({ ...p, kind: e.target.value, priceUnit: e.target.value === "package" ? "month" : "visit" }))}>
+            <option value="urgent">Urgent / instant services</option><option value="package">Monthly packages</option>
+          </select>
+        </Field>
+        <Field label="Name (English) *"><input className="input sm" value={f.name} onChange={(e) => set("name", e.target.value)} placeholder={isPkg ? "Patient care · 12 hours" : "Injection at home"} /></Field>
+        <Field label="নাম (বাংলা) *"><input className="input sm" value={f.nameBangla} onChange={(e) => set("nameBangla", e.target.value)} placeholder={isPkg ? "রোগীর দেখাশোনা · ১২ ঘণ্টা" : "বাসায় ইনজেকশন দেওয়া"} /></Field>
+        <Field label="Icon" width={140}>
+          <select className="input sm" value={f.iconKey} onChange={(e) => set("iconKey", e.target.value)}>
+            {ICON_KEYS.map((k) => <option key={k} value={k}>{k}</option>)}
+          </select>
+        </Field>
+      </div>
+      <div className="field-grid">
+        <Field label="Short description (English)"><input className="input sm" value={f.description || ""} onChange={(e) => set("description", e.target.value)} /></Field>
+        <Field label="Short description (বাংলা)"><input className="input sm" value={f.descriptionBangla || ""} onChange={(e) => set("descriptionBangla", e.target.value)} /></Field>
+      </div>
+      <div className="field-grid">
+        <Field label="Price (৳) — empty = 'price on call'" width={210}><input className="input sm" type="number" value={f.price} onChange={(e) => set("price", e.target.value)} /></Field>
+        <Field label="Price is" width={160}>
+          <select className="input sm" value={f.priceUnit} onChange={(e) => set("priceUnit", e.target.value)}>
+            {Object.entries(OFFER_UNITS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        </Field>
+        <Field label="Small print (English)"><input className="input sm" value={f.priceNote || ""} onChange={(e) => set("priceNote", e.target.value)} placeholder="Medicine not included" /></Field>
+        <Field label="Small print (বাংলা)"><input className="input sm" value={f.priceNoteBangla || ""} onChange={(e) => set("priceNoteBangla", e.target.value)} placeholder="ওষুধের দাম আলাদা" /></Field>
+      </div>
+      {isPkg && (
+        <>
+          <div className="field-grid">
+            <Field label="What's included (English) — one per line"><textarea className="input sm" rows={4} value={f.features} onChange={(e) => set("features", e.target.value)} /></Field>
+            <Field label="What's included (বাংলা) — এক লাইনে একটি"><textarea className="input sm" rows={4} value={f.featuresBangla} onChange={(e) => set("featuresBangla", e.target.value)} /></Field>
+          </div>
+          <div className="field-grid">
+            <Field label="Ribbon (English, optional)" width={200}><input className="input sm" value={f.badge || ""} onChange={(e) => set("badge", e.target.value)} placeholder="Popular" /></Field>
+            <Field label="Ribbon (বাংলা)" width={200}><input className="input sm" value={f.badgeBangla || ""} onChange={(e) => set("badgeBangla", e.target.value)} placeholder="জনপ্রিয়" /></Field>
+          </div>
+        </>
+      )}
+      <div className="row" style={{ alignItems: "center", margin: "6px 0 12px" }}>
+        <Field label="Order" width={90}><input className="input sm" type="number" value={f.sortOrder} onChange={(e) => set("sortOrder", e.target.value)} /></Field>
+        <label className="chip"><input type="checkbox" checked={!!f.isActive} onChange={(e) => set("isActive", e.target.checked)} /> Shown in app</label>
+      </div>
+      <div className="row">
+        <button className="btn sm" onClick={submit} disabled={saving}>{saving ? "Saving…" : "Save"}</button>
+        <button className="btn-ghost sm" onClick={onCancel}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function OffersTab() {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(null); // id | "new" | null
+  const [seeding, setSeeding] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { const r = await apiFetch("/api/admin/care/offers"); if (r.ok) setRows(await r.json()); } catch (e) {} finally { setLoading(false); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function seed() {
+    setSeeding(true);
+    try {
+      const d = await send("/api/admin/care/offers/seed", "POST");
+      alert(d.added ? `Added ${d.added} item(s). Their prices are only suggestions — please check every price before going live.` : "All standard services and packages are already there.");
+      load();
+    } catch (e) { alert(e.message); } finally { setSeeding(false); }
+  }
+  async function remove(o) {
+    if (!window.confirm(`Delete "${o.name}"? Requests already made keep their name and price.`)) return;
+    try { await send(`/api/admin/care/offers/${o._id}`, "DELETE"); load(); } catch (e) { alert(e.message); }
+  }
+
+  const groups = [["urgent", "Urgent / instant services (জরুরি / তাৎক্ষণিক সেবা)"], ["package", "Monthly packages (মাসিক প্যাকেজ)"]];
+
+  return (
+    <>
+      <p className="hint" style={{ marginTop: 0 }}>
+        The two doors on the app's caregiver screen. Families see the name, picture and price, tap one, and only give
+        their name and phone number — the request lands in the Requests tab and your team calls back. Keep the list short:
+        anything else is covered by the glowing "Call us for any other service" button.
+      </p>
+      <div className="row" style={{ marginBottom: 14 }}>
+        <button className="btn sm" onClick={() => setEditing(editing === "new" ? null : "new")}>{editing === "new" ? "Close" : "+ Add service or package"}</button>
+        <button className="btn-ghost sm" onClick={seed} disabled={seeding}>{seeding ? "Adding…" : "Add standard services & packages"}</button>
+      </div>
+      {editing === "new" && (
+        <OfferForm initial={{}} onCancel={() => setEditing(null)}
+          onSave={async (f) => { await send("/api/admin/care/offers", "POST", f); setEditing(null); load(); }} />
+      )}
+      {loading ? <div className="muted">Loading…</div> : groups.map(([kind, label]) => {
+        const list = rows.filter((o) => o.kind === kind);
+        return (
+          <div key={kind} style={{ marginBottom: 18 }}>
+            <div className="section-label">{label}</div>
+            {list.length === 0 ? <div className="muted small">None yet — click "Add standard services & packages".</div> : (
+              <ul className="list">
+                {list.map((o) => (
+                  <li key={o._id} className="list-item" style={{ flexDirection: "column", alignItems: "stretch" }}>
+                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                      <span style={{ flex: 1 }}>
+                        <strong>{o.nameBangla}</strong> <span className="muted">· {o.name}</span>
+                        {o.badge && <span className="pill" style={{ marginLeft: 8, background: "#CCFBF1", color: "#0F766E" }}>{o.badge}</span>}
+                        {!o.isActive && <span className="pill" style={{ marginLeft: 8, background: "#E2E8F0" }}>Hidden</span>}
+                        <div className="muted small">
+                          {o.price != null ? `৳${o.price} ${OFFER_UNITS[o.priceUnit]}` : "price on call"}{o.priceNote ? ` · ${o.priceNote}` : ""} · icon: {o.iconKey} · {o.requestCount} request(s)
+                        </div>
+                      </span>
+                      <button className="btn-ghost sm" onClick={() => setEditing(editing === o._id ? null : o._id)}>{editing === o._id ? "Close" : "Edit"}</button>
+                      <button className="icon-btn" title="Delete" onClick={() => remove(o)}>✕</button>
+                    </div>
+                    {editing === o._id && (
+                      <div style={{ marginTop: 10 }}>
+                        <OfferForm initial={o} onCancel={() => setEditing(null)}
+                          onSave={async (f) => { await send(`/api/admin/care/offers/${o._id}`, "PATCH", f); setEditing(null); load(); }} />
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 /* ================================ PAGE ================================ */
 
 export default function Caregivers({ onChange }) {
@@ -776,6 +939,7 @@ export default function Caregivers({ onChange }) {
       <SubTabs active={tab} onChange={setTab} newCount={counts?.new || 0} />
       {tab === "requests" && <RequestsTab geo={geo} categories={categories} counts={counts} onCountsChange={loadCounts} />}
       {tab === "caregivers" && <CaregiversTab geo={geo} categories={categories} />}
+      {tab === "offers" && <OffersTab />}
       {tab === "types" && <TypesTab categories={categories} onChanged={() => setTypesKey((k) => k + 1)} />}
     </section>
   );
